@@ -58,7 +58,7 @@ def prepare_supervised_data_module(tokenizer: LlamaTokenizer, data_args) -> Dict
     
 
 def train():
-    parser = HfArgumentParser((ModelArguments, DataArguments, ModelArguments))
+    parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
     model = LlamaForCausalLM.from_pretrained(
@@ -74,4 +74,5 @@ def train():
         use_fast=False,
     )
     
-    
+if __name__ == '__main__':
+    train()
