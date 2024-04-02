@@ -11,6 +11,20 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence
 import logging
 import copy
+import json
+
+PROMPT_DICT = {
+    "prompt_input": (
+        "Below is an instruction that describes a task, paired with an input that provides further context. "
+        "Write a response that appropriately completes the request.\n\n"
+        "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
+    ),
+    "prompt_no_input": (
+        "Below is an instruction that describes a task. "
+        "Write a response that appropriately completes the request.\n\n"
+        "### Instruction:\n{instruction}\n\n### Response:"
+    ),
+}
 
 @dataclass
 class ModelArguments:
@@ -40,14 +54,28 @@ class TrainingArguments(transformers.TrainingArguments):
     
 class SupervisedDataset(Dataset):
     """
-    使用alpaca-lora数据集作为有监督的数据集，将aplaca-lora中的数据嵌入到prompt中。
+    使用alpaca-lora数据集作为有监督的数据集 将aplaca-lora中的数据嵌入到prompt中
+    使用tokenizer对文本进行预处理
     """
     
     def __init__(self, data_path: str, tokenizer: LlamaTokenizer) -> None:
         super().__init__()
         logging.warning("Loading data...")
         
-
+        with open(data_path, 'r') as f:
+            list_data_dict = json.load(f)
+        
+        logging.warning("Formatting inputs...")
+        prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        sources = [
+            prompt_input.format_map(example) if example.get("input", "") != "" else prompt_no_input.format_map(example)
+            for example in list_data_dict
+        ]
+        targets = [f"{example["output"]}{tokenizer.eos_token}" for example in list_data_dict]
+        
+        logging.warning("Tokenizing inputs...")
+        data_dict = preprocess(sources, targets, tokenizer)
+        
 def prepare_supervised_data_module(tokenizer: LlamaTokenizer, data_args) -> Dict:
     """
     生成有监督的数据集和collator
@@ -73,6 +101,8 @@ def train():
         padding_side="right",
         use_fast=False,
     )
+    
+    
     
 if __name__ == '__main__':
     train()
