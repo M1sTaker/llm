@@ -4,7 +4,8 @@ import transformers
 from transformers import (
     HfArgumentParser,
     LlamaForCausalLM,
-    LlamaTokenizer
+    LlamaTokenizer,
+    Trainer
 )
 
 from dataclasses import dataclass, field
@@ -56,6 +57,34 @@ class TrainingArguments(transformers.TrainingArguments):
         default=512,
         metadata={"help": "Maximum sequence length."}
     )
+
+def safe_save_model_for_hf_trainer(trainer: Trainer, output_dir: str):
+    state_dict = trainer.model.state_dict()
+    if trainer.args.should_save:
+        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items}
+        del state_dict
+        trainer._save(output_dir, state_dict=cpu_state_dict)
+
+def smart_tokenizer_and_embedding_resize(
+    special_tokens_dict: Dict,
+    tokenizer: LlamaTokenizer,
+    model: LlamaForCausalLM
+):
+    """
+    由于llama在预训练时没有pad token，在微调时添加pad token需要对tokenizer和embedding进行resize
+    """
+    num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
+    model.resize_token_embeddings(len(tokenizer))
+    
+    if num_new_tokens > 0:
+        input_embeddings = model.get_input_embeddings().weight.data
+        output_embeddings = model.get_output_embeddings().weight.data
+        
+        input_embeddings_avg = input_embeddings[:-num_new_tokens].mean(dim=0, keepdim=True)
+        output_embeddings_avg = output_embeddings[:-num_new_tokens].mean(dim=0, keepdim=True)
+        
+        input_embeddings[-num_new_tokens:] = input_embeddings_avg
+        output_embeddings[-num_new_tokens:] = output_embeddings_avg        
 
 def _tokenize_fn(
     texts: Sequence[str],
@@ -114,6 +143,7 @@ def preprocess(
     input_ids = examples_tokenized["input_ids"]
     labels = copy.deepcopy(input_ids)
     
+    # 将target之前的文本source去除
     for label, source_len in zip(labels, sources_tokenized["input_ids_lens"]):
         label[:source_len] = IGNORE_INDEX
     
@@ -152,6 +182,27 @@ class SupervisedDataset(Dataset):
     
     def __getitem__(self, index) -> Dict[str, torch.Tensor]:
         return dict(inpu_ids=self.input_ids[index], labels=self.labels[index])
+
+@dataclass
+class DataCollatorForSupervisedDataset:
+    tokenizer: LlamaTokenizer
+    
+    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
+        input_ids = [instance["input_ids"] for instance in instances]
+        labels = [instance["labels"] for instance in instances]
+        
+        input_ids = torch.nn.utils.rnn.pad_sequence(
+            input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
+        )
+        labels = torch.nn.utils.rnn.pad_sequence(
+            labels, batch_first=True, padding_value=IGNORE_INDEX
+        )
+        
+        return dict(
+            input_ids=input_ids,
+            labels=labels,
+            attention_mask=input_ids.ne(self.tokenizer.pad_token_id)
+        )
         
 def prepare_supervised_data_module(tokenizer: LlamaTokenizer, data_args) -> Dict:
     """
@@ -160,6 +211,9 @@ def prepare_supervised_data_module(tokenizer: LlamaTokenizer, data_args) -> Dict
     Returns:
         Dict: train_dataset, eval_dataset, data_collator
     """
+    train_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.data_path)
+    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
     
 
 def train():
@@ -179,6 +233,26 @@ def train():
         use_fast=False,
     )
     
+    if tokenizer.pad_token is None:
+        smart_tokenizer_and_embedding_resize(
+            special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
+            tokenizer=tokenizer,
+            model=model,
+        )
+    
+    tokenizer.add_special_tokens(
+        {
+            "eos_token": DEFAULT_EOS_TOKEN,
+            "bos_token": DEFAULT_BOS_TOKEN,
+            "unk_token": DEFAULT_UNK_TOKEN,
+        }
+    )
+    
+    data_module = prepare_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
+    trainer.train()
+    trainer.save_state()
+    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
     
     
 if __name__ == '__main__':
