@@ -1,18 +1,25 @@
-import torch
-from torch.utils.data import Dataset
 import transformers
-from transformers import (
+from transformers import(
+    TrainingArguments,
+    Trainer,
     HfArgumentParser,
-    LlamaForCausalLM,
-    LlamaTokenizer,
-    Trainer
+    AutoTokenizer,
+    AutoModel,
 )
+
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset
+from peft import get_peft_model, LoraConfig, TaskType
+from dataclasses import dataclass, field
+import datasets
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence
 import logging
 import copy
 import json
+import os
 
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
@@ -38,6 +45,7 @@ class ModelArguments:
     模型参数
     """
     model_name_or_path: Optional[str] = field(default="meta-llama/Llama-2-7b-hf")
+    lora_rank: int = field(default=8)
 
 @dataclass
 class DataArguments:
@@ -67,11 +75,11 @@ def safe_save_model_for_hf_trainer(trainer: Trainer, output_dir: str):
 
 def smart_tokenizer_and_embedding_resize(
     special_tokens_dict: Dict,
-    tokenizer: LlamaTokenizer,
-    model: LlamaForCausalLM
+    tokenizer: AutoTokenizer,
+    model: AutoModel
 ):
     """
-    由于llama在预训练时没有pad token，在微调时添加pad token需要对tokenizer和embedding进行resize
+    由于在预训练时没有pad token，在微调时添加pad token需要对tokenizer和embedding进行resize
     """
     num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
     model.resize_token_embeddings(len(tokenizer))
@@ -88,14 +96,14 @@ def smart_tokenizer_and_embedding_resize(
 
 def _tokenize_fn(
     texts: Sequence[str],
-    tokenizer: LlamaTokenizer,
+    tokenizer: AutoTokenizer,
     ) -> Dict:
     """
     对文本序列进行tokenize
 
     Args:
         texts (Sequence[str]): 文本序列
-        tokenizer (LlamaTokenizer)
+        tokenizer
 
     Returns:
         Dict: input_ids, labels, input_ids_lens, labels_lens
@@ -125,7 +133,7 @@ def _tokenize_fn(
 def preprocess(
     sources: Sequence[str],
     targets: Sequence[str],
-    tokenizer: LlamaTokenizer,
+    tokenizer: AutoTokenizer,
     ) -> Dict:
     """
     使用tokenizer对文本进行tokenize
@@ -156,7 +164,7 @@ class SupervisedDataset(Dataset):
     使用tokenizer对文本进行预处理
     """
     
-    def __init__(self, data_path: str, tokenizer: LlamaTokenizer) -> None:
+    def __init__(self, data_path: str, tokenizer: AutoTokenizer) -> None:
         super().__init__()
         logging.warning("Loading data...")
         
@@ -185,7 +193,7 @@ class SupervisedDataset(Dataset):
 
 @dataclass
 class DataCollatorForSupervisedDataset:
-    tokenizer: LlamaTokenizer
+    tokenizer: AutoTokenizer
     
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         input_ids = [instance["input_ids"] for instance in instances]
@@ -204,7 +212,7 @@ class DataCollatorForSupervisedDataset:
             attention_mask=input_ids.ne(self.tokenizer.pad_token_id)
         )
         
-def prepare_supervised_data_module(tokenizer: LlamaTokenizer, data_args) -> Dict:
+def prepare_supervised_data_module(tokenizer: AutoTokenizer, data_args) -> Dict:
     """
     生成有监督的数据集和collator
     
@@ -214,31 +222,62 @@ def prepare_supervised_data_module(tokenizer: LlamaTokenizer, data_args) -> Dict
     train_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.data_path)
     data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
+
+class CastOutputToFloat(nn.Sequential):
+    def forward(self, x):
+        return super().forward(x).to(torch.float32)
     
+class ModifiedTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        return model(
+            input_ids=inputs["input_ids"],
+            labels=inputs["labels"],
+        ).loss
+    
+    def save_model(self, output_dir=None, _internal_call=False):
+        from transformers.trainer import TRAINING_ARGS_NAME
+        
+        os.makedirs(output_dir, exist_ok=True)
+        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+        saved_params = {
+            k: v.to("cpu") for k, v in self.model.named_parameters() if v.requires_grad
+        }
+        torch.save(saved_params, os.path,join(output_dir, "adapter_model.bin"))
 
 def train():
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
-    model = LlamaForCausalLM.from_pretrained(
+    model = AutoModel.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
     )
     
-    tokenizer = LlamaTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
-        model_max_length=training_args.max_seq_len,
+        model_max_len=training_args.max_seq_len,
         padding_side="right",
         use_fast=False,
     )
     
-    if tokenizer.pad_token is None:
-        smart_tokenizer_and_embedding_resize(
-            special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
-            tokenizer=tokenizer,
-            model=model,
-        )
+    model.lm_head = CastOutputToFloat(model.lm_head)
+    
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        inference_mode=False,
+        r=model_args.lora_rank,
+        lora_alpha=32,
+        lora_dropout=0.1,
+    )
+    model = get_peft_model(model, peft_config)
+    
+    # if tokenizer.pad_token is None:
+    #     smart_tokenizer_and_embedding_resize(
+    #         special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
+    #         tokenizer=tokenizer,
+    #         model=model,
+    #     )
     
     # tokenizer.add_special_tokens(
     #     {
@@ -249,11 +288,13 @@ def train():
     # )
     
     data_module = prepare_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
-    trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
+    trainer = ModifiedTrainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
     trainer.train()
-    trainer.save_state()
-    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    # trainer.save_state()
+    # safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    model.save_pretrained(training_args.output_dir)
     
     
 if __name__ == '__main__':
     train()
+
