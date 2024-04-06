@@ -251,9 +251,17 @@ def train():
     model = AutoModel.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
-        load_in_8bit=True,
+        # load_in_8bit=True,
         trust_remote_code=True,
         device_map="auto"
+    )
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
+    model.is_parallelizable = True
+    model.model_parallel = True
+    model.lm_head = CastOutputToFloat(model.lm_head)
+    model.config.use_cache = (
+        False  # silence the warnings. Please re-enable for inference!
     )
     
     tokenizer = AutoTokenizer.from_pretrained(
@@ -261,10 +269,9 @@ def train():
         cache_dir=training_args.cache_dir,
         model_max_len=training_args.max_seq_len,
         padding_side="left",
+        trust_remote_code=True,
         use_fast=False,
     )
-    
-    model.lm_head = CastOutputToFloat(model.lm_head)
     
     peft_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
