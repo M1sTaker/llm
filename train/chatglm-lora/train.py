@@ -260,7 +260,7 @@ def train():
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
         model_max_len=training_args.max_seq_len,
-        padding_side="right",
+        padding_side="left",
         use_fast=False,
     )
     
