@@ -189,7 +189,7 @@ class SupervisedDataset(Dataset):
         return len(self.input_ids)
     
     def __getitem__(self, index) -> Dict[str, torch.Tensor]:
-        return dict(inpu_ids=self.input_ids[index], labels=self.labels[index])
+        return dict(input_ids=self.input_ids[index], labels=self.labels[index])
 
 @dataclass
 class DataCollatorForSupervisedDataset:
@@ -242,7 +242,7 @@ class ModifiedTrainer(Trainer):
         saved_params = {
             k: v.to("cpu") for k, v in self.model.named_parameters() if v.requires_grad
         }
-        torch.save(saved_params, os.path,join(output_dir, "adapter_model.bin"))
+        torch.save(saved_params, os.path.join(output_dir, "adapter_model.bin"))
 
 def train():
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
@@ -251,6 +251,9 @@ def train():
     model = AutoModel.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
+        load_in_8bit=True,
+        trust_remote_code=True,
+        device_map="auto"
     )
     
     tokenizer = AutoTokenizer.from_pretrained(
