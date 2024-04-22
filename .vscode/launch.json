@@ -8,14 +8,14 @@
             "name": "train llama",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/train.py",
+            "program": "${workspaceFolder}/train/llama/train.py",
             "args": [
-                "--model_name_or_path=Llama-2-7b-hf",
-                "--data_path=alpaca_data_cleaned.json",
+                "--model_name_or_path=/home/fengqiyuan/Code/llm/train/llama/pretrained_models/Llama-2-7b-hf",
+                "--data_path=/home/fengqiyuan/Code/llm/train/llama/data/alpaca_data_cleaned.json",
                 "--bf16=True",
                 "--output_dir=sft_7b",
                 "--num_train_epochs=1",
-                "--per_device_train_batch_size=4",
+                "--per_device_train_batch_size=1",
                 "--per_device_eval_batch_size=4",
                 "--gradient_accumulation_steps=8",
                 "--evaluation_strategy=no",
@@ -26,28 +26,66 @@
                 "--weight_decay=0.",
                 "--warmup_ratio=0.03",
                 "--lr_scheduler_type=cosine",
-                "--logging_steps=1",
-                "--report_to=tensorboard",
-                "--fsdp=full_shard auto_wrap",
-                "--fsdp_transformer_layer_cls_to_wrap=LlamaDecoderLayer",
-                "--tf32=True"
+                "--logging_steps=100",
+                // "--report_to=tensorboard",
+                // "--fsdp=full_shard auto_wrap",
+                // "--fsdp_transformer_layer_cls_to_wrap=LlamaDecoderLayer",
+                // "--tf32=True"
             ],
             "console": "integratedTerminal",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0"
+                "CUDA_VISIBLE_DEVICES": "2"
+            }
+        },
+        {
+            "name": "train llama with ddp",
+            "type": "python",
+            "request": "launch",
+            "program": "/home/fengqiyuan/anaconda3/envs/llm/bin/deepspeed",
+            "justMyCode": false,
+            "args": [
+                "--num_node=1",
+                "--num_gpus=1",
+                "/home/fengqiyuan/Code/llm/train/llama/train_ddp.py",
+                "--model_name_or_path=/home/fengqiyuan/Code/llm/train/llama/pretrained_models/Llama-2-7b-hf",
+                "--data_path=/home/fengqiyuan/Code/llm/train/llama/data/alpaca_data_cleaned.json",
+                "--fp16=True",
+                "--output_dir=sft_7b",
+                "--num_train_epochs=1",
+                "--per_device_train_batch_size=4",
+                // "--per_device_eval_batch_size=4",
+                // "--gradient_accumulation_steps=8",
+                "--evaluation_strategy=no",
+                "--save_strategy=steps",
+                "--save_steps=2000",
+                "--save_total_limit=1",
+                "--learning_rate=2e-5",
+                "--weight_decay=0.",
+                "--warmup_ratio=0.03",
+                "--lr_scheduler_type=cosine",
+                "--logging_steps=100",
+                "--deepspeed=/home/fengqiyuan/Code/llm/train/llama/ds_config.json",
+                // "--report_to=tensorboard",
+                // "--fsdp=full_shard auto_wrap",
+                // "--fsdp_transformer_layer_cls_to_wrap=LlamaDecoderLayer",
+                // "--tf32=True"
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "2"
             }
         },
         {
             "name": "train glm-lora",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/train.py",
+            "program": "${workspaceFolder}/train/chatglm-lora/train.py",
             "args": [
-                "--model_name_or_path=THUDM/chatglm-6b",
-                "--data_path=alpaca_data_cleaned.json",
+                "--model_name_or_path=train/chatglm-lora/pretrained_model/models--THUDM--chatglm-6b",
+                "--data_path=/home/fengqiyuan/Code/llm/train/llama/data/alpaca_data_cleaned.json",
                 "--lora_rank=8",
                 "--num_train_epochs=1",
-                "--per_device_train_batch_size=6",
+                "--per_device_train_batch_size=8",
                 "--gradient_accumulation_steps=1",
                 "--save_steps=2000",
                 "--save_total_limit=1",
@@ -59,7 +97,7 @@
             ],
             "console": "integratedTerminal",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0"
+                "CUDA_VISIBLE_DEVICES": "5"
             }
         }
     ]
