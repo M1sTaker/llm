@@ -260,7 +260,8 @@ def train():
     trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
     trainer.train()
     trainer.save_state()
-    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    # safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    trainer.save_model()
     
     
 if __name__ == '__main__':

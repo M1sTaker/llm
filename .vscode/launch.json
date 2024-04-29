@@ -44,8 +44,8 @@
             "program": "/home/fengqiyuan/anaconda3/envs/llm/bin/deepspeed",
             "justMyCode": false,
             "args": [
-                "--num_node=1",
-                "--num_gpus=1",
+                "--include=localhost:5,6,7",
+                "--master_port=25641",
                 "/home/fengqiyuan/Code/llm/train/llama/train_ddp.py",
                 "--model_name_or_path=/home/fengqiyuan/Code/llm/train/llama/pretrained_models/Llama-2-7b-hf",
                 "--data_path=/home/fengqiyuan/Code/llm/train/llama/data/alpaca_data_cleaned.json",
@@ -64,6 +64,7 @@
                 "--warmup_ratio=0.03",
                 "--lr_scheduler_type=cosine",
                 "--logging_steps=100",
+                "--gradient_checkpointing=True",
                 "--deepspeed=/home/fengqiyuan/Code/llm/train/llama/ds_config.json",
                 // "--report_to=tensorboard",
                 // "--fsdp=full_shard auto_wrap",
@@ -72,7 +73,7 @@
             ],
             "console": "integratedTerminal",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "2"
+                // "CUDA_VISIBLE_DEVICES": "2"
             }
         },
         {
